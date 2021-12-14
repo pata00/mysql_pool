@@ -1,0 +1,8 @@
+[submodule "3rd/mysql-server"]
+	path = 3rd/mysql-server
+	url = git@github.com:mysql/mysql-server.git
+	branch = 8.0
+[submodule "3rd/gperftools"]
+	path = 3rd/gperftools
+	url = git@github.com:gperftools/gperftools.git
+	branch = master

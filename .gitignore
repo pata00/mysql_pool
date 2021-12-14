@@ -1,0 +1,8 @@
+*.o
+*.d
+*.prof
+*.txt
+*.pdf
+.vscode/*.log
+3rd/*-build
+test_mysql_pool
