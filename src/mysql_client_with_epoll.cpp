@@ -123,11 +123,16 @@ void mysql_client_with_epoll::query(const std::string& sql, query_cb cb)
 
 void mysql_client_with_epoll::do_real_connect(mysql_conn *conn)
 {
-    all_connecting_conns_.emplace_back(conn);
     net_async_status status = mysql_real_connect_nonblocking(conn->mysql, config_host_.c_str(), config_user_.c_str(), config_passwd_.c_str(), config_db_.c_str(), config_port_, nullptr, CLIENT_MULTI_STATEMENTS);
 
-    assert(status == net_async_status::NET_ASYNC_NOT_READY);
-    DEBUG_PRINTF("id = %d, INIT\n", conn->id);
+    if(status == net_async_status::NET_ASYNC_NOT_READY){
+        all_connecting_conns_.emplace_back(conn);
+        DEBUG_PRINTF("id = %d, INIT\n", conn->id);
+    } else if(status == net_async_status::NET_ASYNC_ERROR){
+        on_real_connect_error(conn);
+    } else {
+        assert(false);
+    }
 }
 
 void mysql_client_with_epoll::do_all_real_connect_continue()

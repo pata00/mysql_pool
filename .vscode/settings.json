@@ -84,6 +84,9 @@
         "library/": true,
         "local/": true,
         "temp/": true,
-        ".vscode/*.log":true
+        ".vscode/*.log": true,
+        "**/*.d": true,
+        "**/*.o": true,
+        "test_mysql_pool": true
     }
 }
