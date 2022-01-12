@@ -12,7 +12,8 @@ INCDIR := ./3rd/hiredis \
 ./3rd/gperftools/src
 
 
-CXXFLAGS := -Wall -Wno-unused-variable -std=c++20 -g -O0 -pthread $(addprefix -I, $(INCDIR))
+#CXXFLAGS := -Wall -Wno-unused-variable -std=c++20 -g -O0 -pthread $(addprefix -I, $(INCDIR))
+CXXFLAGS := -Wall -Wno-unused-variable -std=c++20 -O2 -DNDEBUG -pthread $(addprefix -I, $(INCDIR))
 
 LDFLAGS := -lssl -lcrypto -lunwind -ldl -pthread -Wl,-rpath=.
 

@@ -19,7 +19,8 @@ struct mysql_conn {
         READY = 1,
         QUERYING = 2,
         RESULTING = 3,
-        CALLBACKING = 4,
+        NEXTING = 4,
+        CALLBACKING = 5,
     };
 
     MYSQL *mysql;
@@ -72,7 +73,7 @@ private:
 
 class mysql_client_with_epoll {
 public:
-    mysql_client_with_epoll(const char *host, const char *user, const char *passwd, const char *db, unsigned int port, int maxsize, int epoll_fd);
+    mysql_client_with_epoll(const char *host, const char *user, const char *passwd, const char *db, unsigned int port, int maxsize, int keepsize, int epoll_fd);
     //std::shared_ptr<query_result> 
 
     void add_conn();
@@ -98,6 +99,14 @@ public:
     void on_store_result_ingress(mysql_conn *conn);
     void on_store_result_finish(mysql_conn *conn);
 
+    void do_next_result(mysql_conn *conn);    
+    void do_next_result_continue(mysql_conn *conn);
+    void on_next_result_error(mysql_conn *conn);
+    void on_next_result_ingress(mysql_conn *conn);
+    void on_next_result_finish(mysql_conn *conn);
+
+    void on_all_result_finish(mysql_conn *conn);
+
     void run_loop();
 
 
@@ -108,6 +117,8 @@ private:
     const std::string config_passwd_;
     const std::string config_db_;
     const unsigned config_port_;
+    const int config_max_size_;
+    const int config_keep_size_;
 
     const int epoll_fd_;
     std::deque<mysql_conn*> all_connected_conns_;

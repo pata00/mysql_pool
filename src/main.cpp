@@ -8,6 +8,7 @@
 
 
 std::string sql = "update ddns_log_temp set id = 0 where id = 1;select * from ddns_log where id > 100000";
+//std::string sql = "select * from ddns_log where id > 100000";
 mysql_client_with_epoll *gpoll = nullptr;
 
 
@@ -19,6 +20,7 @@ std::chrono::time_point<std::chrono::steady_clock> init_ts;
 
 void on_query_cb(const my_multi_result& multi_result)
 {
+	//return;
 	//printf("query finished\n");
 	assert(multi_result.get_result_count() == 2);
 	auto &result0 = multi_result.get_result(0);
@@ -55,12 +57,7 @@ void handle(int sig) {
 int main(int argc, char* argv[]){
 	ProfilerStart("test_capture.prof");
 
-	mysql_client_with_epoll pool("127.0.0.1", "root", "123456", "MyLog", 3306, 1, -1);
-	gpoll = &pool;
-	//std::string sql = "select * from ddns_log where id > 100000;select * from ddns_log where id > 10000;";
 
-	init_ts = std::chrono::steady_clock::now();
-	last_ts = init_ts;
 
 
 	int default_cnt = 1;
@@ -71,6 +68,13 @@ int main(int argc, char* argv[]){
 			
 		}
 	}
+
+	mysql_client_with_epoll pool("127.0.0.1", "root", "123456", "MyLog", 3306, default_cnt, default_cnt, -1);
+	gpoll = &pool;
+	//std::string sql = "select * from ddns_log where id > 100000;select * from ddns_log where id > 10000;";
+
+	init_ts = std::chrono::steady_clock::now();
+	last_ts = init_ts;
 
 	printf("default_cnt is set to %d\n", default_cnt);
 	for(int i = 0; i < default_cnt; ++i){

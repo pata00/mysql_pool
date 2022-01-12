@@ -42,13 +42,15 @@ std::string time_in_HH_MM_SS_MMM()
 #define DEBUG_PRINTF(fmt, ...)
 
 mysql_client_with_epoll::mysql_client_with_epoll(const char *host, const char *user, const char *passwd,
-    const char *db, unsigned int port, int maxsize, int epoll_fd)
+    const char *db, unsigned int port, int maxsize, int keepsize, int epoll_fd)
     : id_gen_(0)
     , config_host_(host)
     , config_user_(user)
     , config_passwd_(passwd)
     , config_db_(db)
     , config_port_(port)
+    , config_max_size_(maxsize)
+    , config_keep_size_(keepsize)
     , epoll_fd_(epoll_fd == -1 ? epoll_create(1) : epoll_fd)
 {
     //epoll_create failed
@@ -57,7 +59,7 @@ mysql_client_with_epoll::mysql_client_with_epoll(const char *host, const char *u
         assert(false);
     }
 
-    for(int i = 0; i < maxsize; ++i){
+    for(int i = 0; i < config_keep_size_; ++i){
         add_conn();
     }
 }
@@ -93,8 +95,20 @@ void mysql_client_with_epoll::del_conn(mysql_conn *conn){
 
 void mysql_client_with_epoll::auto_expand_conn()
 {
-    int expand_cnt = (int)waiting_tasks_.size() - (int)all_connected_conns_.size();
+    int total_cnt = (int)all_connected_conns_.size() + (int)all_connecting_conns_.size() + (int)all_querying_conns_.size();
+    int expand_cnt = (int)waiting_tasks_.size() - (int)all_connected_conns_.size();//TODO: should choose total_cnt calc?
+
+    //保证config_keep_size_
+    if(total_cnt + expand_cnt < config_keep_size_) {
+        expand_cnt = config_keep_size_ - total_cnt;
+    }
+    //保证config_max_size_
+    if(total_cnt + expand_cnt > config_max_size_){
+        expand_cnt = config_max_size_ - total_cnt;
+    }
+
     if(expand_cnt > 0) {
+        DEBUG_PRINTF("auto_expand_conn %d\n", expand_cnt);
         for(int i = 0; i < expand_cnt; ++i) {
             add_conn();
         }
@@ -117,6 +131,11 @@ void mysql_client_with_epoll::query(const std::string& sql, query_cb cb)
     ++conn->query_cnt;
     conn->sql = std::move(sql);
     conn->cb = cb;
+
+
+    conn->status = mysql_conn::conn_status::QUERYING;
+    all_querying_conns_.emplace(conn->id, conn);
+    DEBUG_PRINTF("id = %d, READY -> QUERYING, query_cnt = %d, sql = %s\n", conn->id, conn->query_cnt, conn->sql.c_str());
 
     do_real_query(conn);
 }
@@ -188,10 +207,6 @@ void mysql_client_with_epoll::on_real_connect_finish(mysql_conn *conn)
 
 void mysql_client_with_epoll::do_real_query(mysql_conn *conn)
 {
-    conn->status = mysql_conn::conn_status::QUERYING;
-    all_querying_conns_.emplace(conn->id, conn);
-
-    DEBUG_PRINTF("id = %d, READY -> QUERYING, query_cnt = %d, sql = %s\n", conn->id, conn->query_cnt, conn->sql.c_str());
     net_async_status status = mysql_real_query_nonblocking(conn->mysql, conn->sql.c_str(), conn->sql.length());
 
     if(status == net_async_status::NET_ASYNC_COMPLETE){
@@ -290,6 +305,7 @@ void mysql_client_with_epoll::on_store_result_ingress(mysql_conn *conn)
 
 void mysql_client_with_epoll::on_store_result_finish(mysql_conn *conn)
 {
+    //DEBUG_PRINTF("on_store_result_finish\n");
     conn->result->multi_data.emplace_back(my_result());
     auto &result = conn->result->multi_data.back();
 
@@ -338,31 +354,90 @@ void mysql_client_with_epoll::on_store_result_finish(mysql_conn *conn)
         mysql_free_result(conn->tmp_res);
     }
 
-    int next_status = mysql_next_result(conn->mysql);
+    assert(conn->status == mysql_conn::conn_status::RESULTING);
+    conn->status = mysql_conn::conn_status::NEXTING;
+    DEBUG_PRINTF("id = %d, RESULTING -> NEXTING\n", conn->id);
+    do_next_result(conn);
+}
 
-    if(next_status == -1){
-        assert(conn->status == mysql_conn::conn_status::RESULTING);
-        conn->status = mysql_conn::conn_status::CALLBACKING;
-        DEBUG_PRINTF("id = %d, RESULTING -> CALLBACKING \n", conn->id);
-        conn->notify_result();
-        conn->status = mysql_conn::conn_status::READY;
-        DEBUG_PRINTF("id = %d, CALLBACKING -> READY \n", conn->id);
+void mysql_client_with_epoll::do_next_result(mysql_conn *conn)
+{
+    net_async_status status = mysql_next_result_nonblocking(conn->mysql);
 
-        auto iter = all_querying_conns_.find(conn->id);
-        assert(iter != all_querying_conns_.end());
-        all_querying_conns_.erase(iter);
-        all_connected_conns_.emplace_back(conn);
-
-    } else if(next_status == 0){
-        do_store_result(conn);
+    if(status == net_async_status::NET_ASYNC_COMPLETE){
+        on_next_result_finish(conn);
+    }
+    else if(status == NET_ASYNC_NOT_READY){
+        //assert(false);
+        //on_next_result_ingress(conn);
+    }
+    else if(status == NET_ASYNC_ERROR){
+        on_next_result_error(conn);
+    }
+    else if(status == net_async_status::NET_ASYNC_COMPLETE_NO_MORE_RESULTS){
+        on_all_result_finish(conn);
     }
     else{
-        DEBUG_PRINTF("id = %d, mysql_next_result for error. mysql_errno:%d,mysql_error:%s\n", 
-            conn->id,
-            mysql_errno(conn->mysql),
-            mysql_error(conn->mysql));
         assert(false);
     }
+}
+
+void mysql_client_with_epoll::do_next_result_continue(mysql_conn *conn)
+{
+    net_async_status status = mysql_next_result_nonblocking(conn->mysql);
+
+    if(status == net_async_status::NET_ASYNC_COMPLETE){
+        on_next_result_finish(conn);
+    }
+    else if(status == net_async_status::NET_ASYNC_NOT_READY){
+        on_next_result_ingress(conn);
+    }
+    else if(status == net_async_status::NET_ASYNC_ERROR){
+        on_next_result_error(conn);
+    }
+    else if(status == net_async_status::NET_ASYNC_COMPLETE_NO_MORE_RESULTS){
+        on_all_result_finish(conn);
+    }
+    else{
+        assert(false);
+    }
+}
+
+void mysql_client_with_epoll::on_next_result_error(mysql_conn *conn)
+{
+    DEBUG_PRINTF("id = %d, on_next_result_error for error. mysql_errno:%d,mysql_error:%s\n", 
+    conn->id,
+    mysql_errno(conn->mysql),
+    mysql_error(conn->mysql));
+}
+
+void mysql_client_with_epoll::on_next_result_ingress(mysql_conn *conn)
+{
+    DEBUG_PRINTF("on_next_result_ingress\n");
+}
+
+void mysql_client_with_epoll::on_next_result_finish(mysql_conn *conn)
+{
+    //DEBUG_PRINTF("on_next_result_finish\n");
+    assert(conn->status == mysql_conn::conn_status::NEXTING);
+    conn->status = mysql_conn::conn_status::RESULTING;
+    DEBUG_PRINTF("id = %d, NEXTING -> RESULTING\n", conn->id);
+    do_store_result(conn);
+}
+
+void mysql_client_with_epoll::on_all_result_finish(mysql_conn *conn)
+{
+    assert(conn->status == mysql_conn::conn_status::NEXTING);
+    conn->status = mysql_conn::conn_status::CALLBACKING;
+    DEBUG_PRINTF("id = %d, NEXTING -> CALLBACKING \n", conn->id);
+    conn->notify_result();
+    conn->status = mysql_conn::conn_status::READY;
+    DEBUG_PRINTF("id = %d, CALLBACKING -> READY \n", conn->id);
+
+    auto iter = all_querying_conns_.find(conn->id);
+    assert(iter != all_querying_conns_.end());
+    all_querying_conns_.erase(iter);
+    all_connected_conns_.emplace_back(conn);    
 }
 
 void mysql_client_with_epoll::run_loop()
@@ -407,8 +482,9 @@ void mysql_client_with_epoll::run_loop()
                 mysql_conn *conn = iter->second;
                 if(conn->status == mysql_conn::conn_status::QUERYING){
                     do_real_query_continue(conn);
+                } else if(conn->status == mysql_conn::conn_status::NEXTING) {
+                    do_next_result_continue(conn);
                 }
-   
                 else{
                     assert(false);
                 }
