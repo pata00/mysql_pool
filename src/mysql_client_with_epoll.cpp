@@ -8,6 +8,10 @@
 #include <errno.h>
 #include <string.h>
 
+
+
+
+#ifdef SHOW_DEBUG_PRINTF
 #include<chrono>
 #include<sstream>
 #include<iomanip>
@@ -35,11 +39,14 @@ std::string time_in_HH_MM_SS_MMM()
 
     return oss.str();
 }
-
-
-//#define DEBUG_PRINTF(fmt, ...) printf("[%s] [%s:%d] " fmt, time_in_HH_MM_SS_MMM().c_str(), __FILE__, __LINE__, ##__VA_ARGS__)
-
+#define DEBUG_PRINTF(fmt, ...) printf("[%s] [%s:%d] " fmt, time_in_HH_MM_SS_MMM().c_str(), __FILE__, __LINE__, ##__VA_ARGS__)
+#else
 #define DEBUG_PRINTF(fmt, ...)
+#endif
+
+
+
+
 
 mysql_client_with_epoll::mysql_client_with_epoll(const char *host, const char *user, const char *passwd,
     const char *db, unsigned int port, int maxsize, int keepsize, int epoll_fd)
@@ -491,6 +498,8 @@ void mysql_client_with_epoll::run_loop()
             if(num_evs == 0){
                 //do timer trigger
             }
+
+            //printf("num_evs = %d\n", num_evs);
 
             //DEBUG_PRINTF("after epoll_wait num_evs:%d\n", num_evs);
             for(int i = 0; i < num_evs; ++i){
