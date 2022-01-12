@@ -106,6 +106,7 @@ public:
     void on_next_result_finish(mysql_conn *conn);
 
     void on_all_result_finish(mysql_conn *conn);
+    void on_some_query_error(mysql_conn *conn);
 
     void run_loop();
 

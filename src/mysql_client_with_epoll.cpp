@@ -249,15 +249,7 @@ void mysql_client_with_epoll::on_real_query_error(mysql_conn *conn)
         mysql_errno(conn->mysql), 
         mysql_error(conn->mysql));
 
-    conn->result->multi_data.emplace_back(my_result());
-    auto &result = conn->result->multi_data.back();
-    result.error_code = mysql_errno(conn->mysql);
-    result.error_str =  mysql_error(conn->mysql);
-
-    conn->notify_result();
-
-    all_querying_conns_.erase(conn->id);
-    all_connected_conns_.push_back(conn);
+    on_some_query_error(conn);
 }
 
 void mysql_client_with_epoll::on_real_query_ingress(mysql_conn *conn)
@@ -295,6 +287,17 @@ void mysql_client_with_epoll::do_store_result(mysql_conn *conn)
 
 void mysql_client_with_epoll::on_store_result_error(mysql_conn *conn)
 {
+    assert(conn->status == mysql_conn::conn_status::RESULTING);
+    conn->status = mysql_conn::conn_status::READY;
+
+    DEBUG_PRINTF("id = %d, RESULTING -> READY, query_cnt = %d, sql = %s, query error. mysql_errno:%d,mysql_error:%s\n", 
+        conn->id, 
+        conn->query_cnt, 
+        conn->sql.c_str(), 
+        mysql_errno(conn->mysql), 
+        mysql_error(conn->mysql));
+
+    on_some_query_error(conn);
     assert(false);
 }
 
@@ -405,10 +408,18 @@ void mysql_client_with_epoll::do_next_result_continue(mysql_conn *conn)
 
 void mysql_client_with_epoll::on_next_result_error(mysql_conn *conn)
 {
-    DEBUG_PRINTF("id = %d, on_next_result_error for error. mysql_errno:%d,mysql_error:%s\n", 
-    conn->id,
-    mysql_errno(conn->mysql),
-    mysql_error(conn->mysql));
+    assert(conn->status == mysql_conn::conn_status::NEXTING);
+    conn->status = mysql_conn::conn_status::READY;
+
+    DEBUG_PRINTF("id = %d, NEXTING -> READY, query_cnt = %d, sql = %s, query error. mysql_errno:%d,mysql_error:%s\n", 
+        conn->id, 
+        conn->query_cnt, 
+        conn->sql.c_str(), 
+        mysql_errno(conn->mysql), 
+        mysql_error(conn->mysql));
+
+    on_some_query_error(conn);
+    assert(false);
 }
 
 void mysql_client_with_epoll::on_next_result_ingress(mysql_conn *conn)
@@ -438,6 +449,19 @@ void mysql_client_with_epoll::on_all_result_finish(mysql_conn *conn)
     assert(iter != all_querying_conns_.end());
     all_querying_conns_.erase(iter);
     all_connected_conns_.emplace_back(conn);    
+}
+
+void mysql_client_with_epoll::on_some_query_error(mysql_conn *conn)
+{
+    conn->result->multi_data.emplace_back(my_result());
+    auto &result = conn->result->multi_data.back();
+    result.error_code = mysql_errno(conn->mysql);
+    result.error_str =  mysql_error(conn->mysql);
+
+    conn->notify_result();
+
+    all_querying_conns_.erase(conn->id);
+    all_connected_conns_.push_back(conn);
 }
 
 void mysql_client_with_epoll::run_loop()
